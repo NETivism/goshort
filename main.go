@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -19,42 +18,28 @@ var (
 	db            *bolt.DB
 )
 
+// GoShort is the object to save to bolt
 type GoShort struct {
 	Short    string `json:"short"`
 	Redirect string `json:"redirect"`
-	Count    int    `json:count`
+	Count    int    `json:"count"`
 }
 
-type securedFileSystem struct {
-	fs http.FileSystem
-}
-
-func (sfs securedFileSystem) Open(path string) (http.File, error) {
-	f, err := sfs.fs.Open(path)
-	if err != nil {
-		return nil, err
-	}
-
-	s, err := f.Stat()
-	if s.IsDir() {
-		index := strings.TrimSuffix(path, "/") + "/index.html"
-		if _, err := sfs.fs.Open(index); err != nil {
-			return nil, err
-		}
-	}
-
-	return f, nil
-}
-
-func CreateEndpoint(w http.ResponseWriter, req *http.Request) {
+// CreateEntry route to create shorten entry
+func CreateEntry(w http.ResponseWriter, req *http.Request) {
 	var goshort GoShort
 	err := json.NewDecoder(req.Body).Decode(&goshort)
 	if err != nil {
-		notFound(w)
+		NotFound(w)
+		err = errors.New("Err: could not decode entry")
+		log.Printf("%s\n", err)
 		return
 	}
 	if goshort.Redirect != "" {
-		uhash := UrlHash(goshort.Redirect)
+		hd := hashids.NewData()
+		h, _ := hashids.NewWithData(hd)
+		now := time.Now()
+		uhash, _ := h.Encode([]int{int(now.Unix())})
 		goshort.Short = uhash
 
 		err = db.Update(func(tx *bolt.Tx) error {
@@ -62,43 +47,44 @@ func CreateEndpoint(w http.ResponseWriter, req *http.Request) {
 			goshort.Count = 1
 			jurl, err := json.Marshal(goshort)
 			if err != nil {
-				return errors.Wrap(err, "could not marshal entry")
+				return errors.Wrap(err, "Err: could not marshal entry")
 			}
 			err = bucket.Put([]byte(uhash), jurl)
+			log.Println("SUCCESS: New entry created - " + string(jurl))
 			if err != nil {
-				return errors.Wrap(err, "could not put data into bucket")
+				return errors.Wrap(err, "Err: could not put data into bucket")
 			}
 			return nil
 		})
 		if err != nil {
-			notFound(w)
-			return
+			log.Printf("%s\n", err)
+			NotFound(w)
 		} else {
 			json.NewEncoder(w).Encode(goshort)
-			return
 		}
+	} else {
+		NotFound(w)
+		err = errors.New("Err: entry missing redirect address")
+		log.Printf("%s\n", err)
 	}
-	notFound(w)
 }
 
-func RootEndpoint(w http.ResponseWriter, req *http.Request) {
+// Root route handler. will get all path by id
+func Root(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
-	log.Output(1, params["id"])
 	var goshort GoShort
 	err := db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(goshortBucket)
 		raw := bucket.Get([]byte(params["id"]))
-		fmt.Printf("The answer is: %s\n", raw)
 		if raw == nil {
 			return errors.New("No entry found")
-		} else {
-			err := json.Unmarshal(raw, &goshort)
-			if err != nil {
-				return errors.Wrap(err, "could not unmarshal entry")
-			} else {
-				return nil
-			}
 		}
+		log.Printf("SUCCESS: visit %s\n", raw)
+		err := json.Unmarshal(raw, &goshort)
+		if err != nil {
+			return errors.Wrap(err, "could not unmarshal entry")
+		}
+		return nil
 	})
 
 	if err == nil {
@@ -115,23 +101,33 @@ func RootEndpoint(w http.ResponseWriter, req *http.Request) {
 			}
 			return nil
 		})
+		if err != nil {
+			log.Printf("%s\n", err)
+		}
 		http.Redirect(w, req, goshort.Redirect, 301)
-		return
+	} else {
+		NotFound(w)
+		log.Printf("%s\n", err)
 	}
-	notFound(w)
 }
 
-func notFound(w http.ResponseWriter) {
+// NotFound is fallback function when entry not found
+func NotFound(w http.ResponseWriter) {
 	w.WriteHeader(404)
 	fmt.Fprint(w, "404 not found")
 }
 
-func UrlHash(s string) string {
-	hd := hashids.NewData()
-	h, _ := hashids.NewWithData(hd)
-	now := time.Now()
-	hid, _ := h.Encode([]int{int(now.Unix())})
-	return hid
+// BackupDatabase is the way to dump all entry to stdout
+func BackupDatabase(w http.ResponseWriter, req *http.Request) {
+	db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(goshortBucket)
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			fmt.Printf("%s\n", v)
+		}
+		return nil
+	})
+	NotFound(w)
 }
 
 func main() {
@@ -144,11 +140,10 @@ func main() {
 		return err
 	})
 
-	fs := http.FileServer(securedFileSystem{http.Dir("./public")})
 	router := mux.NewRouter()
-	router.HandleFunc("/create", CreateEndpoint).Methods("PUT")
-	router.HandleFunc("/{id}", RootEndpoint).Methods("GET")
-	router.PathPrefix("/").Handler(http.StripPrefix("/public/", fs))
+	router.HandleFunc("/handle/create-entry", CreateEntry).Methods("PUT")
+	router.HandleFunc("/handle/backup-database", BackupDatabase).Methods("PUT")
+	router.HandleFunc("/{id}", Root).Methods("GET")
 	log.Fatal(http.ListenAndServe(":33512", router))
 
 	defer db.Close()
