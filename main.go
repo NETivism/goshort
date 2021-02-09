@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -37,12 +38,37 @@ func CreateEntry(w http.ResponseWriter, req *http.Request) {
 	}
 	if goshort.Redirect != "" {
 		hd := hashids.NewData()
-		h, _ := hashids.NewWithData(hd)
-		now := time.Now()
-		uhash, _ := h.Encode([]int{int(now.Unix())})
-		goshort.Short = uhash
+		limit := 0
+		now := time.Now().Unix()
+		uhash := ""
+		for limit < 5 {
+			hd.Salt = fmt.Sprintf("%d", rand.Intn(10000000))
+			h, _ := hashids.NewWithData(hd)
+			uhash, _ = h.Encode([]int{int(now)})
+			err := db.View(func(tx *bolt.Tx) error {
+				bucket := tx.Bucket(goshortBucket)
+				raw := bucket.Get([]byte(uhash))
+				if raw == nil {
+					return nil
+				}
+				time.Sleep(1 * time.Second)
+				err := errors.New("Err: duplicate entry or " + uhash + ", continue")
+				return err
+			})
+			if err == nil {
+				break
+			} else {
+				log.Printf("Continue next loop because %s\n", err)
+			}
+			limit++
+		}
 
 		err = db.Update(func(tx *bolt.Tx) error {
+			if len(uhash) <= 0 {
+				return errors.Wrap(err, "No short string")
+			} else {
+				goshort.Short = uhash
+			}
 			bucket := tx.Bucket(goshortBucket)
 			goshort.Count = 1
 			jurl, err := json.Marshal(goshort)
@@ -117,19 +143,6 @@ func NotFound(w http.ResponseWriter) {
 	fmt.Fprint(w, "404 not found")
 }
 
-// BackupDatabase is the way to dump all entry to stdout
-func BackupDatabase(w http.ResponseWriter, req *http.Request) {
-	db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(goshortBucket)
-		c := b.Cursor()
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			fmt.Printf("%s\n", v)
-		}
-		return nil
-	})
-	NotFound(w)
-}
-
 func main() {
 	var err error
 	db, err = bolt.Open("goshort.db", 0666, nil)
@@ -142,7 +155,6 @@ func main() {
 
 	router := mux.NewRouter()
 	router.HandleFunc("/handle/create-entry", CreateEntry).Methods("PUT")
-	router.HandleFunc("/handle/backup-database", BackupDatabase).Methods("PUT")
 	router.HandleFunc("/{id}", Root).Methods("GET")
 	log.Fatal(http.ListenAndServe(":33512", router))
 
