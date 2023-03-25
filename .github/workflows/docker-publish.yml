@@ -35,9 +35,8 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            ${{ github.repository }}
             ghcr.io/${{ github.repository }}
-
+            rg.netivism.com.tw/${{ github.repository }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v3
