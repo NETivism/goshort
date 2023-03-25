@@ -1,4 +1,4 @@
-FROM netivism/docker-debian-base
+FROM ghcr.io/netivism/docker-debian-base
 LABEL maintainer="Jimmy Huang <jimmy@netivism.com.tw>"
 LABEL description="This Dockerfile will install goshort"
 
