@@ -7,11 +7,14 @@ import (
 	"math/rand"
 	"net/http"
 	"time"
+	"os"
 
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/speps/go-hashids"
 	bolt "go.etcd.io/bbolt"
+	"crypto/sha256"
+  "crypto/subtle"
 )
 
 var (
@@ -24,6 +27,57 @@ type GoShort struct {
 	Short    string `json:"short"`
 	Redirect string `json:"redirect"`
 	Count    int    `json:"count"`
+}
+
+type Authenticate struct {
+	username string
+	password string
+}
+
+func BasicAuth(next http.HandlerFunc) http.HandlerFunc {
+	auth := new(Authenticate)
+	auth.username = os.Getenv("AUTH_USERNAME")
+	auth.password = os.Getenv("AUTH_PASSWORD")
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if ok {
+			usernameHash := sha256.Sum256([]byte(username))
+			passwordHash := sha256.Sum256([]byte(password))
+			expectedUsernameHash := sha256.Sum256([]byte(auth.username))
+			expectedPasswordHash := sha256.Sum256([]byte(auth.password))
+
+			usernameMatch := (subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1)
+			passwordMatch := (subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1)
+
+			if usernameMatch && passwordMatch {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	})
+}
+
+func ListEntries(w http.ResponseWriter, req *http.Request) {
+	w.WriteHeader(200)
+	fmt.Fprint(w, "Successful logged\n")
+
+	db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(goshortBucket)
+		c := bucket.Cursor()
+
+		count := 0
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			fmt.Fprintf(w, "key=%s, value=%s\n", k, v)
+			count++
+		}
+
+	  fmt.Fprintf(w, "Total num rows: %d rows\n", count)
+		return nil
+	})
 }
 
 // CreateEntry route to create shorten entry
@@ -39,12 +93,13 @@ func CreateEntry(w http.ResponseWriter, req *http.Request) {
 	if goshort.Redirect != "" {
 		hd := hashids.NewData()
 		limit := 0
-		now := time.Now().Unix()
+		now := time.Now().UnixNano()
 		uhash := ""
 		for limit < 5 {
 			hd.Salt = fmt.Sprintf("%d", rand.Intn(10000000))
 			h, _ := hashids.NewWithData(hd)
 			uhash, _ = h.Encode([]int{int(now)})
+			log.Printf("%s hashed generated.\n", uhash);
 			err := db.View(func(tx *bolt.Tx) error {
 				bucket := tx.Bucket(goshortBucket)
 				raw := bucket.Get([]byte(uhash))
@@ -154,6 +209,8 @@ func main() {
 	})
 
 	router := mux.NewRouter()
+
+	router.HandleFunc("/handle/list-entries", BasicAuth(ListEntries)).Methods("GET")
 	router.HandleFunc("/handle/create-entry", CreateEntry).Methods("PUT")
 	router.HandleFunc("/{id}", Root).Methods("GET")
 	log.Fatal(http.ListenAndServe(":33512", router))
