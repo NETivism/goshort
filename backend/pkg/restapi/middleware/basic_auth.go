@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
-	"os"
 
+	"github.com/netivism/goshort/backend/pkg/env"
 	"github.com/netivism/goshort/backend/pkg/handler"
 )
 
@@ -16,8 +16,8 @@ type Authenticate struct {
 
 func BasicAuth(next http.HandlerFunc) http.HandlerFunc {
 	auth := new(Authenticate)
-	auth.username = os.Getenv("AUTH_USERNAME")
-	auth.password = os.Getenv("AUTH_PASSWORD")
+	auth.username = env.Get(env.AuthUsername)
+	auth.password = env.Get(env.AuthPassword)
 
 	if auth.username == "" {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

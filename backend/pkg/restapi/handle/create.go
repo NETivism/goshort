@@ -6,14 +6,16 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"time"
 
-	blt "github.com/netivism/goshort/backend/pkg/bolt"
+	"github.com/netivism/goshort/backend/pkg/db"
+	"github.com/netivism/goshort/backend/pkg/model"
+
 	"github.com/netivism/goshort/backend/pkg/goshort"
 	"github.com/netivism/goshort/backend/pkg/handler"
 	"github.com/pkg/errors"
 	"github.com/speps/go-hashids"
-	bolt "go.etcd.io/bbolt"
 )
 
 func Create(w http.ResponseWriter, req *http.Request) {
@@ -31,29 +33,42 @@ func Create(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	r, err := url.Parse(gs.Redirect)
+	if err != nil {
+		handler.HandlerError(w, "Redirection format must be http/s url.", http.StatusBadRequest)
+		return
+	}
+	if r.Scheme != "http" && r.Scheme != "https" {
+		handler.HandlerError(w, "Redirection format must be http/s url.", http.StatusBadRequest)
+		return
+	}
+	if r.User.Username() != "" {
+		handler.HandlerError(w, "Redirection format shouldn't include username of password.", http.StatusBadRequest)
+		return
+	}
+
 	uhash, err := GenerateUniqueHash()
 	if err != nil {
 		handler.HandlerError(w, fmt.Sprintf("Hash generation error. %v", err), http.StatusBadRequest)
 		return
 	}
 
-	err = blt.DB.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(blt.GoshortBucket)
-		gs.Short = uhash
-		gs.Count = 1
-		jurl, err := json.Marshal(gs)
-		if err != nil {
-			return errors.Wrap(err, "Err: could not marshal entry")
-		}
-		err = bucket.Put([]byte(uhash), jurl)
-		log.Println("SUCCESS: New entry created - " + string(jurl))
-		if err != nil {
-			return errors.Wrap(err, "Err: could not put data into bucket")
-		}
-		return nil
-	})
-
+	dbi, err := db.Connect()
 	if err != nil {
+		handler.HandlerError(w, fmt.Sprintf("Error connect db. %v", err), http.StatusInternalServerError)
+		return
+	}
+	gs.Short = uhash
+	gs.Count = 1
+	record := model.Redirect{
+		Id:       gs.Short,
+		Redirect: gs.Redirect,
+		Domain:   r.Host,
+		Path:     r.Path,
+	}
+	created := dbi.Create(&record)
+
+	if created.Error != nil {
 		handler.HandlerError(w, fmt.Sprintf("Error when saving record. %v", err), http.StatusInternalServerError)
 	} else {
 		result := []goshort.GoShort{gs}
@@ -64,6 +79,10 @@ func Create(w http.ResponseWriter, req *http.Request) {
 func GenerateUniqueHash() (string, error) {
 	tries := 0
 	now := time.Now().Unix()
+	dbi, err := db.Connect()
+	if err != nil {
+		return "", errors.New("Unable to generate unique hash because no db connection")
+	}
 
 	for tries < 5 {
 		hd := hashids.NewData()
@@ -72,24 +91,14 @@ func GenerateUniqueHash() (string, error) {
 		h, _ := hashids.NewWithData(hd)
 		uhash, _ := h.Encode([]int{int(now)})
 
-		err := blt.DB.View(func(tx *bolt.Tx) error {
-			bucket := tx.Bucket(blt.GoshortBucket)
-			raw := bucket.Get([]byte(uhash))
-			if raw == nil {
-				return nil
-			}
-			time.Sleep(1 * time.Second)
-			err := errors.New("Duplicate entry of " + uhash + ", continue")
-			return err
-		})
-
-		if err == nil {
-			return uhash, nil
-		} else {
-			log.Printf("Continue next loop because %s\n", err)
+		var exists = model.Redirect{Id: uhash}
+		result := dbi.First(&exists)
+		if result.RowsAffected > 0 {
+			log.Printf("Continue next loop because conflict of short id %s", uhash)
+			tries++
+			continue
 		}
-
-		tries++
+		return uhash, nil
 	}
 
 	return "", errors.New("Unable to generate unique hash")

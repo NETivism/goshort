@@ -1,18 +1,14 @@
 package root
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 
 	"github.com/gorilla/mux"
-	blt "github.com/netivism/goshort/backend/pkg/bolt"
-	"github.com/netivism/goshort/backend/pkg/goshort"
+	"github.com/netivism/goshort/backend/pkg/db"
 	"github.com/netivism/goshort/backend/pkg/handler"
-	"github.com/pkg/errors"
-	bolt "go.etcd.io/bbolt"
+	"github.com/netivism/goshort/backend/pkg/model"
 )
 
 func Root(w http.ResponseWriter, req *http.Request) {
@@ -35,39 +31,21 @@ func Root(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var goshort goshort.GoShort
-	err := blt.DB.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(blt.GoshortBucket)
-		raw := bucket.Get([]byte(shortenId))
-		if raw == nil {
-			return errors.New("No entry of " + shortenId)
-		}
-		err := json.Unmarshal(raw, &goshort)
-		if err != nil {
-			return errors.Wrap(err, "Entry format error.")
-		}
-		return nil
-	})
-
+	dbi, err := db.Connect()
 	if err != nil {
-		handler.HandlerError(w, fmt.Sprintf("URL not found. %s", err), http.StatusNotFound)
-	} else {
-		err = blt.DB.Update(func(tx *bolt.Tx) error {
-			bucket := tx.Bucket(blt.GoshortBucket)
-			goshort.Count++
-			jurl, err := json.Marshal(goshort)
-			if err != nil {
-				return errors.Wrap(err, "could not marshal entry")
-			}
-			err = bucket.Put([]byte(goshort.Short), jurl)
-			if err != nil {
-				return errors.Wrap(err, "could not put data into bucket")
-			}
-			return nil
-		})
-		if err != nil {
-			log.Printf("%s\n", err)
+		return
+	}
+	exists := model.Redirect{Id: shortenId}
+	result := dbi.First(&exists)
+
+	if result.RowsAffected > 0 && exists.Redirect != "" {
+		http.Redirect(w, req, exists.Redirect, http.StatusMovedPermanently)
+		visit := model.Visits{
+			RedirectId: shortenId,
 		}
-		http.Redirect(w, req, goshort.Redirect, http.StatusMovedPermanently)
+		result = dbi.Create(&visit)
+		if result.Error != nil {
+			log.Printf("%s\n", result.Error)
+		}
 	}
 }

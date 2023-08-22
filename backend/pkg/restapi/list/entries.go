@@ -1,14 +1,13 @@
 package list
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
-	blt "github.com/netivism/goshort/backend/pkg/bolt"
+	"github.com/netivism/goshort/backend/pkg/db"
 	"github.com/netivism/goshort/backend/pkg/goshort"
 	"github.com/netivism/goshort/backend/pkg/handler"
-	bolt "go.etcd.io/bbolt"
+	"github.com/netivism/goshort/backend/pkg/model"
 )
 
 func Entries(w http.ResponseWriter, req *http.Request) {
@@ -20,31 +19,18 @@ func Entries(w http.ResponseWriter, req *http.Request) {
 	}
 	limit := 100
 
+	dbi, _ := db.Connect()
+
 	result := make([]goshort.GoShort, 0)
-
-	blt.DB.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(blt.GoshortBucket)
-		c := bucket.Cursor()
-
-		count := -1
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			count++
-			if count < offset {
-				continue
-			}
-			var val goshort.GoShort
-			err := json.Unmarshal(v, &val)
-
-			if err == nil {
-				result = append(result, val)
-				if len(result) > limit {
-					break
-				}
-			}
+	records := []model.Redirect{}
+	dbi.Limit(limit).Offset(offset).Find(&records)
+	for _, record := range records {
+		val := goshort.GoShort{
+			Short:    record.Id,
+			Redirect: record.Redirect,
 		}
-
-		return nil
-	})
+		result = append(result, val)
+	}
 	if len(result) > 0 {
 		handler.HandlerSuccess(w, "Entries loaded successfully.", result, http.StatusOK)
 	} else {
