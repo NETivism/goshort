@@ -92,7 +92,7 @@ func GenerateUniqueHash() (string, error) {
 		uhash, _ := h.Encode([]int{int(now)})
 
 		var exists = model.Redirect{Id: uhash}
-		result := dbi.First(&exists)
+		result := dbi.Limit(1).Find(&exists)
 		if result.RowsAffected > 0 {
 			log.Printf("Continue next loop because conflict of short id %s", uhash)
 			tries++

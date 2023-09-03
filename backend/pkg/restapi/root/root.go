@@ -36,7 +36,7 @@ func Root(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	exists := model.Redirect{Id: shortenId}
-	result := dbi.First(&exists)
+	result := dbi.Limit(1).Find(&exists)
 
 	if result.RowsAffected > 0 && exists.Redirect != "" {
 		http.Redirect(w, req, exists.Redirect, http.StatusMovedPermanently)

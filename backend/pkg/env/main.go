@@ -88,5 +88,5 @@ func GetMysqlDsn() string {
 }
 
 func GetSqliteDsn() string {
-	return fmt.Sprintf("%s.sqlite", DatabaseName)
+	return fmt.Sprintf("%s.sqlite", Get(DatabaseName))
 }

@@ -4,8 +4,8 @@ import (
 	"log"
 	"sync"
 
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
+	//	"gorm.io/driver/mysql"
+	//	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -25,12 +25,14 @@ func Connect() (*gorm.DB, error) {
 		var dialector gorm.Dialector
 
 		switch dbType {
-		case "mysql":
-			dialector = mysql.Open(env.GetMysqlDsn())
 		case "sqlite":
 			dialector = sqlite.Open(env.GetSqliteDsn())
-		case "postgres":
-			dialector = postgres.Open(env.GetPostgresDsn())
+		/*
+			case "mysql":
+				dialector = mysql.Open(env.GetMysqlDsn())
+			case "postgres":
+				dialector = postgres.Open(env.GetPostgresDsn())
+		*/
 		default:
 			log.Fatalf("Unsupported DATABASE_TYPE: %s", dbType)
 		}
