@@ -1,2 +1,4 @@
 bin
-goshort.db
+*.sqlite
+*.db
+.env*

@@ -1,8 +1,15 @@
-FROM ghcr.io/netivism/docker-debian-base
-LABEL maintainer="Jimmy Huang <jimmy@netivism.com.tw>"
-LABEL description="This Dockerfile will install goshort"
+FROM golang:1.20-bookworm as build
+WORKDIR /usr/src/app
+COPY backend .
+RUN go mod download && go mod verify
+RUN go build -v -o /usr/src/app/goshort 
 
-EXPOSE 33512
-COPY goshort /goshort
-RUN chmod +x /goshort
-CMD ["/goshort"]
+FROM debian:bookworm
+RUN \
+  apt-get update && \
+  apt-get install --yes libc-bin libc6
+RUN \
+  mkdir -p /goshort
+WORKDIR /goshort
+COPY --from=build /usr/src/app/goshort /usr/local/bin
+CMD [ "goshort" ]

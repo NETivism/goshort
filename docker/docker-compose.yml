@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  goshort:
+    image: netivism/goshort
+    restart: on-failure
+    volumes:
+      - .:/goshort
+    env_file:
+      - .env
+    ports:
+      - 33512:${LISTEN_PORT}

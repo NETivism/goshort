@@ -1,0 +1,16 @@
+# http basic auth name and passwd, required
+AUTH_USERNAME=http_basic_auth_name
+AUTH_PASSWORD=http_basic_auth_password
+
+# http server listen post, required
+LISTEN_PORT=33512
+
+# sqlite
+DATABASE_TYPE=sqlite
+DATABASE_NAME=goshort
+
+# fill these when using mysql / pgsql
+DATABASE_HOST=
+DATABASE_PORT=
+DATABASE_USER=
+DATABASE_PASSWORD=

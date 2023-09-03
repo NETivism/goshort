@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  goshort:
+    restart: on-failure
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    volumes:
+      - .:/goshort
+    env_file:
+      - .env
+    ports:
+      - 33512:${LISTEN_PORT}
