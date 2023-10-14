@@ -31,10 +31,7 @@ func Root(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	dbi, err := db.Connect()
-	if err != nil {
-		return
-	}
+	dbi := db.Get()
 	exists := model.Redirect{Id: shortenId}
 	result := dbi.Limit(1).Find(&exists)
 

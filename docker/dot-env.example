@@ -9,8 +9,11 @@ LISTEN_PORT=33512
 DATABASE_TYPE=sqlite
 DATABASE_NAME=goshort
 
-# fill these when using mysql / pgsql
+# mysql / pgsql further support(currently not available)
 DATABASE_HOST=
 DATABASE_PORT=
 DATABASE_USER=
 DATABASE_PASSWORD=
+
+# Migrate Database from boltdb sqlite
+DATABASE_MIGRATE=false

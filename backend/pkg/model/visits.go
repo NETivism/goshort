@@ -2,7 +2,7 @@ package model
 
 type Visits struct {
 	Id         uint    `gorm:"primaryKey"`
-	RedirectId string  `gorm:"size:64,index"`
+	RedirectId string  `gorm:"size:64,index,not null"`
 	Utm        Utm     `gorm:"embedded;embeddedPrefix:utm_"`
 	Referer    Referer `gorm:"embedded;embeddedPrefix:referer_"`
 	CreatedAt  int64

@@ -19,7 +19,7 @@ func Entries(w http.ResponseWriter, req *http.Request) {
 	}
 	limit := 100
 
-	dbi, _ := db.Connect()
+	dbi := db.Get()
 
 	result := make([]goshort.GoShort, 0)
 	records := []model.Redirect{}

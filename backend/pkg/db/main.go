@@ -18,7 +18,7 @@ var (
 	once     sync.Once
 )
 
-func Connect() (*gorm.DB, error) {
+func Connect() error {
 	var err error
 	once.Do(func() {
 		dbType := env.Get(env.DatabaseType)
@@ -42,9 +42,14 @@ func Connect() (*gorm.DB, error) {
 			log.Fatalf("Failed to connect to database: %v", err)
 		} else {
 			// auto create table when not exists
-			instance.AutoMigrate(&model.Redirect{}, &model.Visits{})
+
+			instance.AutoMigrate(&model.Redirect{}, &model.Visits{}, &model.Statistics{})
 		}
 	})
 
-	return instance, err
+	return err
+}
+
+func Get() *gorm.DB {
+	return instance
 }

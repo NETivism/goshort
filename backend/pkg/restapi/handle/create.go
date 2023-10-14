@@ -53,11 +53,7 @@ func Create(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	dbi, err := db.Connect()
-	if err != nil {
-		handler.HandlerError(w, fmt.Sprintf("Error connect db. %v", err), http.StatusInternalServerError)
-		return
-	}
+	dbi := db.Get()
 	gs.Short = uhash
 	gs.Count = 1
 	record := model.Redirect{
@@ -79,10 +75,7 @@ func Create(w http.ResponseWriter, req *http.Request) {
 func GenerateUniqueHash() (string, error) {
 	tries := 0
 	now := time.Now().Unix()
-	dbi, err := db.Connect()
-	if err != nil {
-		return "", errors.New("Unable to generate unique hash because no db connection")
-	}
+	dbi := db.Get()
 
 	for tries < 5 {
 		hd := hashids.NewData()

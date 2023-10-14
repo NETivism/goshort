@@ -62,7 +62,8 @@ func Check() error {
 }
 
 func Get(name string) string {
-	return os.Getenv(name)
+	val := os.Getenv(name)
+	return val
 }
 
 func GetPostgresDsn() string {
