@@ -35,5 +35,4 @@ func main() {
 	port := ":" + env.Get(env.ListenPort)
 	fmt.Printf("HTTP server startup and listening on port%s\n", port)
 	log.Fatal(http.ListenAndServe(port, router))
-
 }
