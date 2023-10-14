@@ -2,7 +2,7 @@ version: '3'
 
 services:
   goshort:
-    image: netivism/goshort
+    image: netivism/goshort:sqlite
     restart: on-failure
     volumes:
       - .:/goshort
