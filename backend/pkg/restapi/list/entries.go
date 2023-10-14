@@ -14,11 +14,15 @@ import (
 func Entries(w http.ResponseWriter, req *http.Request) {
 	queryParams := req.URL.Query()
 	offsetStr := queryParams.Get("offset")
+	limitStr := queryParams.Get("limit")
 	offset, err := strconv.Atoi(offsetStr)
 	if err != nil {
 		offset = 0
 	}
-	limit := 100
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 100
+	}
 
 	result := make([]goshort.GoShort, 0)
 
