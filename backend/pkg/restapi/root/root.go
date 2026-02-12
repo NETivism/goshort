@@ -9,6 +9,7 @@ import (
 	"github.com/netivism/goshort/backend/pkg/db"
 	"github.com/netivism/goshort/backend/pkg/handler"
 	"github.com/netivism/goshort/backend/pkg/model"
+	"github.com/netivism/goshort/backend/pkg/referrer"
 )
 
 func Root(w http.ResponseWriter, req *http.Request) {
@@ -37,8 +38,29 @@ func Root(w http.ResponseWriter, req *http.Request) {
 
 	if result.RowsAffected > 0 && exists.Redirect != "" {
 		http.Redirect(w, req, exists.Redirect, http.StatusMovedPermanently)
+
+		scheme := "http"
+		if req.TLS != nil {
+			scheme = "https"
+		}
+		if fwd := req.Header.Get("X-Forwarded-Proto"); fwd != "" {
+			scheme = fwd
+		}
+		currentURL := scheme + "://" + req.Host + req.RequestURI
+		refererHeader := req.Header.Get("Referer")
+		userAgent := req.Header.Get("User-Agent")
+
+		info := referrer.Parse(currentURL, refererHeader, userAgent)
+		utm := referrer.ParseUTM(currentURL)
+
 		visit := model.Visits{
 			RedirectId: shortenId,
+			Utm:        utm,
+			Referer: model.Referer{
+				Type:    info.Type,
+				Network: info.Network,
+				Link:    info.Link,
+			},
 		}
 		result = dbi.Create(&visit)
 		if result.Error != nil {

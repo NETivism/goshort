@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	AuthUsername     = "AUTH_USERNAME"
+	AuthType         = "AUTH_TYPE"
+	AuthUsername      = "AUTH_USERNAME"
 	AuthPassword     = "AUTH_PASSWORD"
+	AuthApikey       = "AUTH_APIKEY"
 	Debug            = "DEBUG"
 	ListenPort       = "LISTEN_PORT"
 	DatabaseType     = "DATABASE_TYPE"
@@ -22,8 +24,6 @@ const (
 
 var (
 	requiredEnvVarNames = []string{
-		AuthUsername,
-		AuthPassword,
 		DatabaseType,
 		ListenPort,
 	}
@@ -51,6 +51,21 @@ func Check() error {
 	case "sqlite":
 		if Get(DatabaseName) == "" {
 			missingEnvVarNames = append(missingEnvVarNames, DatabaseName)
+		}
+	}
+
+	authType := Get(AuthType)
+	switch authType {
+	case "apikey":
+		if Get(AuthApikey) == "" {
+			missingEnvVarNames = append(missingEnvVarNames, AuthApikey)
+		}
+	default:
+		// default to basic auth
+		for _, envVarName := range []string{AuthUsername, AuthPassword} {
+			if Get(envVarName) == "" {
+				missingEnvVarNames = append(missingEnvVarNames, envVarName)
+			}
 		}
 	}
 

@@ -53,3 +53,15 @@ func Connect() error {
 func Get() *gorm.DB {
 	return instance
 }
+
+// ConnectForTest sets the db instance directly, bypassing sync.Once.
+// Only use this in tests.
+func ConnectForTest(dialector gorm.Dialector) error {
+	var err error
+	instance, err = gorm.Open(dialector, &gorm.Config{})
+	if err != nil {
+		return err
+	}
+	instance.AutoMigrate(&model.Redirect{}, &model.Visits{}, &model.Statistics{})
+	return nil
+}
