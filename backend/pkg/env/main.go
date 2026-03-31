@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -20,6 +21,7 @@ const (
 	DatabaseUser     = "DATABASE_USER"
 	DatabasePassword = "DATABASE_PASSWORD"
 	DatabaseMigrate  = "DATABASE_MIGRATE"
+	Timezone         = "TIMEZONE"
 )
 
 var (
@@ -101,6 +103,18 @@ func GetMysqlDsn() string {
 		Get(DatabasePort),
 		Get(DatabaseName),
 	)
+}
+
+func GetTimezone() *time.Location {
+	tz := Get(Timezone)
+	if tz == "" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
 }
 
 func GetSqliteDsn() string {

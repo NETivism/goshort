@@ -17,3 +17,8 @@ DATABASE_NAME=goshort
 
 # Migrate Database from boltdb sqlite
 DATABASE_MIGRATE=false
+
+# Timezone for date grouping in visit statistics (IANA timezone name)
+# See: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+# Defaults to UTC if unset or invalid
+TIMEZONE=Asia/Taipei

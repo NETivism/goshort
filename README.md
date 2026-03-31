@@ -59,6 +59,7 @@ All configuration is done via environment variables, loaded from `./docker/.env`
 | `AUTH_PASSWORD`    | Yes*     | —        | Password for HTTP Basic Auth (*required when `AUTH_TYPE` is not `apikey`) |
 | `AUTH_APIKEY`      | Yes*     | —        | API key value (*required when `AUTH_TYPE=apikey`) |
 | `DATABASE_MIGRATE` | No       | `false`  | Set to `true` to run BoltDB → SQLite migration on startup |
+| `TIMEZONE`         | No       | `UTC`    | IANA timezone name for visit date grouping (e.g. `Asia/Taipei`) |
 
 Example `.env`:
 
@@ -69,6 +70,7 @@ LISTEN_PORT=33512
 DATABASE_TYPE=sqlite
 DATABASE_NAME=goshort
 DATABASE_MIGRATE=false
+TIMEZONE=Asia/Taipei
 ```
 
 ---
@@ -220,7 +222,7 @@ Get aggregated visit statistics for a specific short URL.
 **Notes:**
 - `total` is the total number of visits recorded for this short URL.
 - `referrer_statistics` groups visits by type (e.g. `social`, `search`, `ad`, `email`, `direct`, `link`, `internal`, `unknown`). Each type contains an `all` count plus per-network breakdowns (e.g. `facebook`, `google`).
-- `dates` groups visits by calendar date (`YYYY-MM-DD`). Each date always contains `allday` (total). Hourly keys (`0`–`23`) are included only when `allday > 10`.
+- `dates` groups visits by calendar date (`YYYY-MM-DD`) in the timezone set by `TIMEZONE` (defaults to UTC). Each date always contains `allday` (total). Hourly keys (`0`–`23`) are included only when `allday > 10`.
 
 **Referrer types:** `ad`, `email`, `social`, `search`, `internal`, `direct`, `link`, `unknown`
 

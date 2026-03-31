@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/netivism/goshort/backend/pkg/db"
+	"github.com/netivism/goshort/backend/pkg/env"
 	"github.com/netivism/goshort/backend/pkg/model"
 )
 
@@ -70,8 +71,8 @@ func computeVisitStats(visits []model.Visits) VisitsStatResult {
 			refStats[refType][v.Referer.Network]++
 		}
 
-		// Date statistics
-		t := time.Unix(v.CreatedAt, 0)
+		// Date statistics (in configured timezone)
+		t := time.Unix(v.CreatedAt, 0).In(env.GetTimezone())
 		dateKey := t.Format("2006-01-02")
 		if dayMap[dateKey] == nil {
 			dayMap[dateKey] = &dayData{}
