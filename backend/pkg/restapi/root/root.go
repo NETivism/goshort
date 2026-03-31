@@ -37,6 +37,9 @@ func Root(w http.ResponseWriter, req *http.Request) {
 	result := dbi.Limit(1).Find(&exists)
 
 	if result.RowsAffected > 0 && exists.Redirect != "" {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "Thu, 01 Jan 1970 00:00:00 GMT")
 		http.Redirect(w, req, exists.Redirect, http.StatusMovedPermanently)
 
 		scheme := "http"
@@ -51,11 +54,9 @@ func Root(w http.ResponseWriter, req *http.Request) {
 		userAgent := req.Header.Get("User-Agent")
 
 		info := referrer.Parse(currentURL, refererHeader, userAgent)
-		utm := referrer.ParseUTM(currentURL)
 
 		visit := model.Visits{
 			RedirectId: shortenId,
-			Utm:        utm,
 			Referer: model.Referer{
 				Type:    info.Type,
 				Network: info.Network,

@@ -2,8 +2,6 @@ package referrer
 
 import (
 	"net/url"
-
-	"github.com/netivism/goshort/backend/pkg/model"
 )
 
 type ReferrerInfo struct {
@@ -65,20 +63,4 @@ func Parse(currentURL, referrerURL, userAgent string) *ReferrerInfo {
 	}
 
 	return &ReferrerInfo{Type: "unknown"}
-}
-
-// ParseUTM extracts utm_* query parameters from the given URL.
-func ParseUTM(rawURL string) model.Utm {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return model.Utm{}
-	}
-	q := parsed.Query()
-	return model.Utm{
-		Source:   q.Get("utm_source"),
-		Medium:   q.Get("utm_medium"),
-		Term:     q.Get("utm_term"),
-		Content:  q.Get("utm_content"),
-		Campaign: q.Get("utm_campaign"),
-	}
 }

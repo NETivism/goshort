@@ -133,38 +133,3 @@ func TestExternalLink(t *testing.T) {
 	}
 }
 
-func TestParseUTMFull(t *testing.T) {
-	utm := ParseUTM("https://example.com/?utm_source=google&utm_medium=cpc&utm_campaign=spring&utm_term=shoes&utm_content=ad1")
-	if utm.Source != "google" {
-		t.Errorf("expected source=google, got %s", utm.Source)
-	}
-	if utm.Medium != "cpc" {
-		t.Errorf("expected medium=cpc, got %s", utm.Medium)
-	}
-	if utm.Campaign != "spring" {
-		t.Errorf("expected campaign=spring, got %s", utm.Campaign)
-	}
-	if utm.Term != "shoes" {
-		t.Errorf("expected term=shoes, got %s", utm.Term)
-	}
-	if utm.Content != "ad1" {
-		t.Errorf("expected content=ad1, got %s", utm.Content)
-	}
-}
-
-func TestParseUTMPartial(t *testing.T) {
-	utm := ParseUTM("https://example.com/?utm_source=newsletter")
-	if utm.Source != "newsletter" {
-		t.Errorf("expected source=newsletter, got %s", utm.Source)
-	}
-	if utm.Medium != "" {
-		t.Errorf("expected empty medium, got %s", utm.Medium)
-	}
-}
-
-func TestParseUTMNone(t *testing.T) {
-	utm := ParseUTM("https://example.com/page")
-	if utm.Source != "" || utm.Medium != "" || utm.Campaign != "" {
-		t.Errorf("expected empty UTM, got %+v", utm)
-	}
-}

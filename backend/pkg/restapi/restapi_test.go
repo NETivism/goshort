@@ -190,53 +190,6 @@ func TestCreateThenRedirectFlow(t *testing.T) {
 	}
 }
 
-func TestCreateThenRedirectWithUTM(t *testing.T) {
-	setBasicAuth(t)
-	setupTestDB(t)
-	router := New()
-
-	// Create short URL
-	body := `{"redirect":"https://example.com/page"}`
-	createReq := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
-	createReq.Header.Set("Content-Type", "application/json")
-	createRR := httptest.NewRecorder()
-	router.ServeHTTP(createRR, createReq)
-
-	var createResp map[string]interface{}
-	json.NewDecoder(createRR.Body).Decode(&createResp)
-	shortID := createResp["result"].([]interface{})[0].(map[string]interface{})["short"].(string)
-
-	// Visit with UTM parameters in the URL
-	visitReq := httptest.NewRequest("GET", "/"+shortID+"?utm_source=newsletter&utm_medium=email&utm_campaign=spring", nil)
-	visitRR := httptest.NewRecorder()
-	router.ServeHTTP(visitRR, visitReq)
-
-	if visitRR.Code != http.StatusMovedPermanently {
-		t.Fatalf("redirect: expected 301, got %d", visitRR.Code)
-	}
-
-	// Verify UTM fields in visit record
-	dbi := db.Get()
-	var visits []model.Visits
-	dbi.Where("redirect_id = ?", shortID).Find(&visits)
-	if len(visits) != 1 {
-		t.Fatalf("expected 1 visit, got %d", len(visits))
-	}
-	v := visits[0]
-	if v.Utm.Source != "newsletter" {
-		t.Errorf("expected utm_source=newsletter, got %s", v.Utm.Source)
-	}
-	if v.Utm.Medium != "email" {
-		t.Errorf("expected utm_medium=email, got %s", v.Utm.Medium)
-	}
-	if v.Utm.Campaign != "spring" {
-		t.Errorf("expected utm_campaign=spring, got %s", v.Utm.Campaign)
-	}
-	// No referrer header → should be direct
-	if v.Referer.Type != "email" {
-		t.Errorf("expected referer_type=email (from utm_medium=email), got %s", v.Referer.Type)
-	}
-}
 
 func TestCreateThenRedirectWithGoogleSearch(t *testing.T) {
 	setBasicAuth(t)
@@ -414,9 +367,14 @@ func TestCreateThenMultipleVisits(t *testing.T) {
 	}
 	var visitsResp map[string]interface{}
 	json.NewDecoder(visitsRR.Body).Decode(&visitsResp)
-	apiResults := visitsResp["result"].([]interface{})
-	if len(apiResults) != 3 {
-		t.Errorf("visits API: expected 3 results, got %d", len(apiResults))
+	resultObj := visitsResp["result"].(map[string]interface{})
+	refStats := resultObj["referrer_statistics"].(map[string]interface{})
+	if len(refStats) != 3 {
+		t.Errorf("visits API: expected 3 referrer types, got %d", len(refStats))
+	}
+	dateStats := resultObj["dates"].(map[string]interface{})
+	if len(dateStats) == 0 {
+		t.Errorf("visits API: expected at least 1 date entry")
 	}
 }
 
@@ -487,9 +445,18 @@ func TestVisitsWithBasicAuth(t *testing.T) {
 	if resp["success"] != float64(1) {
 		t.Fatalf("expected success=1, got %v", resp["success"])
 	}
-	results := resp["result"].([]interface{})
-	if len(results) != 2 {
-		t.Errorf("expected 2 visits, got %d", len(results))
+	resultObj := resp["result"].(map[string]interface{})
+	refStats := resultObj["referrer_statistics"].(map[string]interface{})
+	if len(refStats) != 2 {
+		t.Errorf("expected 2 referrer types (social, direct), got %d", len(refStats))
+	}
+	social := refStats["social"].(map[string]interface{})
+	if social["all"] != float64(1) {
+		t.Errorf("expected social.all=1, got %v", social["all"])
+	}
+	direct := refStats["direct"].(map[string]interface{})
+	if direct["all"] != float64(1) {
+		t.Errorf("expected direct.all=1, got %v", direct["all"])
 	}
 }
 
@@ -518,13 +485,14 @@ func TestVisitsWithApiKeyAuth(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.NewDecoder(rr.Body).Decode(&resp)
-	results := resp["result"].([]interface{})
-	if len(results) != 1 {
-		t.Errorf("expected 1 visit, got %d", len(results))
+	resultObj := resp["result"].(map[string]interface{})
+	refStats := resultObj["referrer_statistics"].(map[string]interface{})
+	search := refStats["search"].(map[string]interface{})
+	if search["all"] != float64(1) {
+		t.Errorf("expected search.all=1, got %v", search["all"])
 	}
-	visit := results[0].(map[string]interface{})
-	if visit["RedirectId"] != "vis02" {
-		t.Errorf("expected RedirectId=vis02, got %v", visit["RedirectId"])
+	if search["google"] != float64(1) {
+		t.Errorf("expected search.google=1, got %v", search["google"])
 	}
 }
 
@@ -558,56 +526,17 @@ func TestVisitsNonexistent(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.NewDecoder(rr.Body).Decode(&resp)
-	results := resp["result"].([]interface{})
-	if len(results) != 0 {
-		t.Errorf("expected 0 visits, got %d", len(results))
-	}
 	if resp["message"] != "No visits found." {
 		t.Errorf("expected 'No visits found.' message, got %v", resp["message"])
 	}
-}
-
-// --- /list/entries tests ---
-
-func TestListEntriesWithAuth(t *testing.T) {
-	setBasicAuth(t)
-	setupTestDB(t)
-
-	dbi := db.Get()
-	dbi.Create(&model.Redirect{Id: "lst01", Redirect: "https://a.com", Domain: "a.com", Path: "/"})
-	dbi.Create(&model.Redirect{Id: "lst02", Redirect: "https://b.com", Domain: "b.com", Path: "/"})
-
-	router := New()
-	req := httptest.NewRequest("GET", "/list/entries", nil)
-	req.SetBasicAuth("admin", "secret")
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
+	resultObj := resp["result"].(map[string]interface{})
+	refStats := resultObj["referrer_statistics"].(map[string]interface{})
+	if len(refStats) != 0 {
+		t.Errorf("expected empty referrer_statistics, got %d entries", len(refStats))
 	}
-
-	var resp map[string]interface{}
-	json.NewDecoder(rr.Body).Decode(&resp)
-	if resp["success"] != float64(1) {
-		t.Errorf("expected success=1, got %v", resp["success"])
-	}
-	results := resp["result"].([]interface{})
-	if len(results) < 2 {
-		t.Errorf("expected at least 2 entries, got %d", len(results))
+	dates := resultObj["dates"].(map[string]interface{})
+	if len(dates) != 0 {
+		t.Errorf("expected empty dates, got %d entries", len(dates))
 	}
 }
 
-func TestListEntriesWithoutAuth(t *testing.T) {
-	setBasicAuth(t)
-	setupTestDB(t)
-
-	router := New()
-	req := httptest.NewRequest("GET", "/list/entries", nil)
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", rr.Code)
-	}
-}
