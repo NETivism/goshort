@@ -55,7 +55,18 @@ func Migrate() {
 	redirects := []model.Redirect{}
 	for _, gs := range items {
 		count++
-		gs.Redirect = strings.Replace(gs.Redirect, "\n", "", -1)
+		// Remove all control characters (including \n \r mid-string) and invisible Unicode
+		gs.Redirect = strings.Map(func(r rune) rune {
+			if r < 0x20 || r == '\u200B' || r == '\uFEFF' {
+				return -1
+			}
+			return r
+		}, gs.Redirect)
+		gs.Redirect = strings.TrimSpace(gs.Redirect)
+		// Strip leading non-URL text (e.g. "可於https://...")
+		if idx := strings.Index(gs.Redirect, "http"); idx > 0 {
+			gs.Redirect = gs.Redirect[idx:]
+		}
 		r, err := url.Parse(gs.Redirect)
 		if err == nil {
 			redirect := model.Redirect{
