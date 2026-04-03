@@ -123,9 +123,22 @@ Protected endpoints require either HTTP Basic Auth or API Key Auth depending on 
 Authorization: Basic <base64(username:password)>
 ```
 
+```bash
+curl -u username:password https://your-domain/handle/create \
+  -H "Content-Type: application/json" \
+  -d '{"redirect": "https://example.com/some/long/path"}'
+```
+
 **API Key Auth (`AUTH_TYPE=apikey`):**
 ```
 Authorization: Bearer <your-api-key>
+```
+
+```bash
+curl -H "Authorization: Bearer <your-api-key>" \
+  -H "Content-Type: application/json" \
+  https://your-domain/handle/create \
+  -d '{"redirect": "https://example.com/some/long/path"}'
 ```
 
 ---

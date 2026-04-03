@@ -1,6 +1,12 @@
-# http basic auth name and passwd, required
+# Authentication type: leave unset for HTTP Basic Auth, or set to "apikey" for API Key Auth
+#AUTH_TYPE=apikey
+
+# HTTP Basic Auth credentials (required when AUTH_TYPE is not "apikey")
 AUTH_USERNAME=http_basic_auth_name
 AUTH_PASSWORD=http_basic_auth_password
+
+# API Key Auth (required when AUTH_TYPE=apikey)
+#AUTH_APIKEY=your_api_key_here
 
 # http server listen post, required
 LISTEN_PORT=33512
