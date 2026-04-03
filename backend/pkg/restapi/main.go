@@ -13,6 +13,7 @@ import (
 func New() *mux.Router {
 	router := mux.NewRouter()
 	router.HandleFunc("/handle/create", handle.Create).Methods("POST")
+	router.HandleFunc("/handle/create-entry", handle.Create).Methods("POST") // backward compatibility
 	router.HandleFunc("/handle/visits/{id}", middleware.Auth(handle.Visits)).Methods("GET")
 	router.HandleFunc("/{id}", root.Root).Methods("GET")
 
