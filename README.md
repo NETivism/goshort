@@ -235,7 +235,7 @@ Get aggregated visit statistics for a specific short URL.
 **Notes:**
 - `total` is the total number of visits recorded for this short URL.
 - `referrer_statistics` groups visits by type (e.g. `social`, `search`, `ad`, `email`, `direct`, `link`, `internal`, `unknown`). Each type contains an `all` count plus per-network breakdowns (e.g. `facebook`, `google`).
-- `dates` groups visits by calendar date (`YYYY-MM-DD`) in the timezone set by `TIMEZONE` (defaults to UTC). Each date always contains `allday` (total). Hourly keys (`0`–`23`) are included only when `allday > 10`.
+- `dates` groups visits by calendar date (`YYYY-MM-DD`) in the timezone set by `TIMEZONE` (defaults to UTC). Each date always contains `allday` (total). Hourly keys (`0`–`23`) are included based on `VISITS_HOURLY_THRESHOLD`: `0` = never, `1` = always, `N > 1` = only when `allday > N` (defaults to `10`).
 
 **Referrer types:** `ad`, `email`, `social`, `search`, `internal`, `direct`, `link`, `unknown`
 

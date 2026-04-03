@@ -3,6 +3,7 @@ package env
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,7 +22,8 @@ const (
 	DatabaseUser     = "DATABASE_USER"
 	DatabasePassword = "DATABASE_PASSWORD"
 	DatabaseMigrate  = "DATABASE_MIGRATE"
-	Timezone         = "TIMEZONE"
+	Timezone                = "TIMEZONE"
+	VisitsHourlyThreshold   = "VISITS_HOURLY_THRESHOLD"
 )
 
 var (
@@ -115,6 +117,20 @@ func GetTimezone() *time.Location {
 		return time.UTC
 	}
 	return loc
+}
+
+// GetVisitsHourlyThreshold returns the threshold for showing hourly breakdown in visit stats.
+// 0 = disabled, 1 = always show, N > 1 = show only when allday > N.
+func GetVisitsHourlyThreshold() int64 {
+	val := Get(VisitsHourlyThreshold)
+	if val == "" {
+		return 10
+	}
+	n, err := strconv.ParseInt(val, 10, 64)
+	if err != nil || n < 0 {
+		return 10
+	}
+	return n
 }
 
 func GetSqliteDsn() string {

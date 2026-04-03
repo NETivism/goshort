@@ -28,3 +28,8 @@ DATABASE_MIGRATE=false
 # See: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 # Defaults to UTC if unset or invalid
 TIMEZONE=Asia/Taipei
+
+# Hourly breakdown threshold for visit statistics.
+# 0 = disabled (never show hourly), 1 = always show hourly,
+# N > 1 = show hourly only when daily visits exceed N. Defaults to 10.
+#VISITS_HOURLY_THRESHOLD=10

@@ -81,11 +81,14 @@ func computeVisitStats(visits []model.Visits) VisitsStatResult {
 		dayMap[dateKey].hours[t.Hour()]++
 	}
 
-	// Build dates output; include hourly breakdown only if allday > 100
+	// Build dates output; include hourly breakdown based on VISITS_HOURLY_THRESHOLD.
+	// 0 = disabled, 1 = always, N > 1 = only when allday > N.
+	threshold := env.GetVisitsHourlyThreshold()
 	dates := make(map[string]map[string]int64)
 	for date, data := range dayMap {
 		m := map[string]int64{"allday": data.allday}
-		if data.allday > 10 {
+		showHourly := threshold == 1 || (threshold > 1 && data.allday > threshold)
+		if showHourly {
 			for h := 0; h < 24; h++ {
 				m[fmt.Sprintf("%d", h)] = data.hours[h]
 			}
