@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/netivism/goshort/backend/pkg/db"
 	"github.com/netivism/goshort/backend/pkg/goshort"
@@ -82,6 +83,42 @@ func Migrate() {
 	}
 	log.Printf("Trying to insert %v records..", count)
 	dbi.CreateInBatches(&redirects, 1000)
+
+	// Migrate bolt Count values into Statistics
+	now := time.Now()
+	// AggDateEnd = yesterday at 23:59:59.
+	// This ensures any visits recorded today are picked up by the first incremental Refresh.
+	yesterday := now.AddDate(0, 0, -1)
+	aggEnd := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 0, now.Location())
+	aggStart := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	stats := make([]model.Statistics, 0, len(items))
+	for _, gs := range items {
+		if gs.Count <= 0 {
+			continue
+		}
+		result := model.VisitsStatResult{
+			Total:              int64(gs.Count),
+			ReferrerStatistics: make(map[string]map[string]int64),
+			Dates:              make(map[string]map[string]int64),
+		}
+		resultJSON, err := json.Marshal(result)
+		if err != nil {
+			log.Printf("Failed to marshal statistics for %s: %v", gs.Short, err)
+			continue
+		}
+		stats = append(stats, model.Statistics{
+			RedirectId:   gs.Short,
+			Result:       string(resultJSON),
+			AggDateStart: aggStart,
+			AggDateEnd:   aggEnd,
+			CreatedAt:    now.Unix(),
+			UpdateAt:     now.Unix(),
+		})
+	}
+	if len(stats) > 0 {
+		dbi.CreateInBatches(&stats, 1000)
+		log.Printf("Migrated %v statistics records from bolt.", len(stats))
+	}
 	log.Println("Migration Completed. Exit application.")
 }
 

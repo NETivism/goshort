@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	blt "github.com/netivism/goshort/backend/pkg/bolt"
+	"github.com/netivism/goshort/backend/pkg/cleanup"
 	"github.com/netivism/goshort/backend/pkg/db"
 	"github.com/netivism/goshort/backend/pkg/env"
 	"github.com/netivism/goshort/backend/pkg/restapi"
@@ -31,6 +32,7 @@ func main() {
 		}
 		os.Exit(0)
 	}
+	cleanup.StartMonthlyCleanup()
 	router := restapi.New()
 	port := ":" + env.Get(env.ListenPort)
 	fmt.Printf("HTTP server startup and listening on port%s\n", port)

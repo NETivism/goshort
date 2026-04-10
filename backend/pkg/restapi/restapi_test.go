@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 
@@ -540,3 +541,257 @@ func TestVisitsNonexistent(t *testing.T) {
 	}
 }
 
+// --- Statistics cache tests ---
+
+// TestVisitsCreatesStatisticsOnFirstCall verifies that a Statistics record is
+// created after the first visits API call (cache miss path).
+func TestVisitsCreatesStatisticsOnFirstCall(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	dbi := db.Get()
+	id := "statcache-create-01"
+	dbi.Create(&model.Redirect{Id: id, Redirect: "https://example.com", Domain: "example.com", Path: "/"})
+	dbi.Create(&model.Visits{RedirectId: id, Referer: model.Referer{Type: "direct"}, CreatedAt: time.Now().Unix()})
+
+	router := New()
+	req := httptest.NewRequest("GET", "/handle/visits/"+id, nil)
+	req.Header.Set("Authorization", "Bearer testkey")
+	httptest.NewRecorder()
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var stat model.Statistics
+	if err := dbi.Where("redirect_id = ?", id).First(&stat).Error; err != nil {
+		t.Fatalf("Statistics not created after first API call: %v", err)
+	}
+	if stat.UpdateAt == 0 {
+		t.Error("expected non-zero Statistics.UpdateAt")
+	}
+}
+
+// TestVisitsCacheHitReturnsCachedResult verifies that a fresh Statistics record
+// (UpdateAt within 1 hour) is returned directly without re-querying Visits.
+func TestVisitsCacheHitReturnsCachedResult(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	dbi := db.Get()
+	id := "statcache-hit-01"
+
+	// Insert a fresh Statistics record with a known total.
+	cachedResult := model.VisitsStatResult{
+		Total:              42,
+		ReferrerStatistics: map[string]map[string]int64{"direct": {"all": 42}},
+		Dates:              map[string]map[string]int64{"2026-01-01": {"allday": 42}},
+	}
+	cachedJSON, _ := json.Marshal(cachedResult)
+	now := time.Now().Unix()
+	dbi.Create(&model.Statistics{
+		RedirectId:   id,
+		Result:       string(cachedJSON),
+		AggDateStart: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		AggDateEnd:   time.Now(),
+		CreatedAt:    now,
+		UpdateAt:     now, // fresh (< 1 hour old)
+	})
+
+	// Insert a visit that should NOT affect the result (cache is fresh).
+	dbi.Create(&model.Visits{RedirectId: id, Referer: model.Referer{Type: "search", Network: "google"}, CreatedAt: now})
+
+	router := New()
+	req := httptest.NewRequest("GET", "/handle/visits/"+id, nil)
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+
+	if resp["message"] != "Visits loaded from cache." {
+		t.Errorf("expected cache hit message, got: %v", resp["message"])
+	}
+	resultObj := resp["result"].(map[string]interface{})
+	if resultObj["total"] != float64(42) {
+		t.Errorf("expected cached total=42, got %v", resultObj["total"])
+	}
+}
+
+// TestVisitsCacheMissRecomputes verifies that a stale Statistics record
+// (UpdateAt > 1 hour ago) triggers a re-computation from the Visits table.
+func TestVisitsCacheMissRecomputes(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	dbi := db.Get()
+	id := "statcache-miss-01"
+
+	// Insert a stale Statistics record.
+	staleResult := model.VisitsStatResult{
+		Total:              5,
+		ReferrerStatistics: map[string]map[string]int64{"direct": {"all": 5}},
+		Dates:              map[string]map[string]int64{},
+	}
+	staleJSON, _ := json.Marshal(staleResult)
+	staleTime := time.Now().Add(-2 * time.Hour)
+	dbi.Create(&model.Statistics{
+		RedirectId:   id,
+		Result:       string(staleJSON),
+		AggDateStart: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		AggDateEnd:   staleTime,
+		CreatedAt:    staleTime.Unix(),
+		UpdateAt:     staleTime.Unix(), // stale (> 1 hour old)
+	})
+
+	// Add 3 new visits (after AggDateEnd).
+	newTs := time.Now().Unix()
+	for i := 0; i < 3; i++ {
+		dbi.Create(&model.Visits{RedirectId: id, Referer: model.Referer{Type: "search", Network: "google"}, CreatedAt: newTs})
+	}
+
+	router := New()
+	req := httptest.NewRequest("GET", "/handle/visits/"+id, nil)
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+
+	if resp["message"] == "Visits loaded from cache." {
+		t.Error("expected cache miss (recompute), not a cache hit")
+	}
+	resultObj := resp["result"].(map[string]interface{})
+	// 5 (stale base) + 3 (new visits) = 8
+	if resultObj["total"] != float64(8) {
+		t.Errorf("expected total=8 (5 base + 3 new), got %v", resultObj["total"])
+	}
+}
+
+// TestVisitsHistoryPreservedAfterVisitsClear verifies that Statistics retains
+// historical data even after the Visits table is cleared.
+func TestVisitsHistoryPreservedAfterVisitsClear(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	dbi := db.Get()
+	id := "statcache-clear-01"
+
+	// Seed a Statistics record (simulates a prior aggregation with 50 total visits).
+	historicalResult := model.VisitsStatResult{
+		Total:              50,
+		ReferrerStatistics: map[string]map[string]int64{"direct": {"all": 50}},
+		Dates:              map[string]map[string]int64{"2025-12-01": {"allday": 50}},
+	}
+	historicalJSON, _ := json.Marshal(historicalResult)
+	staleTime := time.Now().Add(-2 * time.Hour)
+	dbi.Create(&model.Statistics{
+		RedirectId:   id,
+		Result:       string(historicalJSON),
+		AggDateStart: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		AggDateEnd:   staleTime,
+		CreatedAt:    staleTime.Unix(),
+		UpdateAt:     staleTime.Unix(),
+	})
+
+	// Visits table has been cleared — no rows exist for this redirect.
+	// (We intentionally do not insert any visits.)
+
+	router := New()
+	req := httptest.NewRequest("GET", "/handle/visits/"+id, nil)
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	resultObj := resp["result"].(map[string]interface{})
+
+	// Historical total must be preserved even with no visits in the table.
+	if resultObj["total"] != float64(50) {
+		t.Errorf("expected historical total=50, got %v", resultObj["total"])
+	}
+
+	// The 2025-12-01 date entry from history must still be present.
+	dates := resultObj["dates"].(map[string]interface{})
+	if _, ok := dates["2025-12-01"]; !ok {
+		t.Error("expected historical date 2025-12-01 to be preserved in Statistics")
+	}
+}
+
+// TestVisitsForceRefresh verifies that ?refresh=1 bypasses the 1-hour cache.
+func TestVisitsForceRefresh(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	dbi := db.Get()
+	id := "statcache-force-01"
+
+	// Insert a fresh Statistics record (would normally be served from cache).
+	cachedResult := model.VisitsStatResult{
+		Total:              99,
+		ReferrerStatistics: map[string]map[string]int64{"direct": {"all": 99}},
+		Dates:              map[string]map[string]int64{},
+	}
+	cachedJSON, _ := json.Marshal(cachedResult)
+	now := time.Now().Unix()
+	dbi.Create(&model.Statistics{
+		RedirectId:   id,
+		Result:       string(cachedJSON),
+		AggDateStart: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		AggDateEnd:   time.Now(),
+		CreatedAt:    now,
+		UpdateAt:     now, // fresh
+	})
+
+	// Add 1 new visit that is NOT in the cache yet.
+	dbi.Create(&model.Visits{RedirectId: id, Referer: model.Referer{Type: "search", Network: "google"}, CreatedAt: now + 1})
+
+	router := New()
+
+	// Without ?refresh=1 → cache hit, total stays 99.
+	req := httptest.NewRequest("GET", "/handle/visits/"+id, nil)
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp["message"] != "Visits loaded from cache." {
+		t.Errorf("expected cache hit without ?refresh=1, got: %v", resp["message"])
+	}
+	if resp["result"].(map[string]interface{})["total"] != float64(99) {
+		t.Errorf("expected cached total=99, got %v", resp["result"].(map[string]interface{})["total"])
+	}
+
+	// With ?refresh=1 → cache bypassed, total becomes 99 + 1 = 100.
+	req2 := httptest.NewRequest("GET", "/handle/visits/"+id+"?refresh=1", nil)
+	req2.Header.Set("Authorization", "Bearer testkey")
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, req2)
+
+	var resp2 map[string]interface{}
+	json.NewDecoder(rr2.Body).Decode(&resp2)
+	if resp2["message"] == "Visits loaded from cache." {
+		t.Error("expected cache bypass with ?refresh=1, but got a cache hit")
+	}
+	if resp2["result"].(map[string]interface{})["total"] != float64(100) {
+		t.Errorf("expected refreshed total=100 (99+1), got %v", resp2["result"].(map[string]interface{})["total"])
+	}
+}

@@ -13,6 +13,7 @@ A self-hosted URL shortener with visit tracking and referrer detection. Built wi
 - [Run the Service](#run-the-service)
 - [API Reference](#api-reference)
 - [Authentication](#authentication)
+- [Statistics Cache & Monthly Cleanup](#statistics-cache--monthly-cleanup)
 - [Migrate from BoltDB to SQLite](#migrate-from-boltdb-to-sqlite)
 - [SQLite Database Queries](#sqlite-database-queries)
 
@@ -24,9 +25,12 @@ A self-hosted URL shortener with visit tracking and referrer detection. Built wi
 - HTTP 301 redirect on short URL access
 - Track visits per short URL with referrer parsing
 - Detect traffic source: ads, email, social, search, direct, internal, or link
-- Aggregated visit statistics by referrer type and date
+- Aggregated visit statistics by referrer type and date, with per-hour breakdown
+- Statistics caching: results are cached in the `statistics` table and refreshed at most once per hour
+- Incremental aggregation: only new visits (since last cache update) are processed on each refresh, preserving historical data even after the `visits` table is cleared
+- Automatic monthly cleanup: visits older than the current month are deleted on the 1st of each month at 02:00 (configured timezone), after statistics are refreshed and persisted
 - HTTP Basic Auth or API Key Auth for protected endpoints
-- One-time migration utility from BoltDB to SQLite
+- One-time migration utility from BoltDB to SQLite (visit counts are preserved in `statistics`)
 
 ---
 
@@ -49,17 +53,18 @@ The SQLite database file will be created at `./docker/goshort.sqlite` (based on 
 
 All configuration is done via environment variables, loaded from `./docker/.env`.
 
-| Variable           | Required | Default  | Description |
-|--------------------|----------|----------|-------------|
-| `LISTEN_PORT`      | Yes      | `33512`  | HTTP server port |
-| `DATABASE_TYPE`    | Yes      | `sqlite` | Database type (only `sqlite` is currently supported) |
-| `DATABASE_NAME`    | Yes      | `goshort`| SQLite database filename (stored as `{name}.sqlite`) |
-| `AUTH_TYPE`        | No       | (basic)  | Set to `apikey` to use API key auth; omit for HTTP Basic Auth |
-| `AUTH_USERNAME`    | Yes*     | —        | Username for HTTP Basic Auth (*required when `AUTH_TYPE` is not `apikey`) |
-| `AUTH_PASSWORD`    | Yes*     | —        | Password for HTTP Basic Auth (*required when `AUTH_TYPE` is not `apikey`) |
-| `AUTH_APIKEY`      | Yes*     | —        | API key value (*required when `AUTH_TYPE=apikey`) |
-| `DATABASE_MIGRATE` | No       | `false`  | Set to `true` to run BoltDB → SQLite migration on startup |
-| `TIMEZONE`         | No       | `UTC`    | IANA timezone name for visit date grouping (e.g. `Asia/Taipei`) |
+| Variable                   | Required | Default  | Description |
+|----------------------------|----------|----------|-------------|
+| `LISTEN_PORT`              | Yes      | `33512`  | HTTP server port |
+| `DATABASE_TYPE`            | Yes      | `sqlite` | Database type (only `sqlite` is currently supported) |
+| `DATABASE_NAME`            | Yes      | `goshort`| SQLite database filename (stored as `{name}.sqlite`) |
+| `AUTH_TYPE`                | No       | (basic)  | Set to `apikey` to use API key auth; omit for HTTP Basic Auth |
+| `AUTH_USERNAME`            | Yes*     | —        | Username for HTTP Basic Auth (*required when `AUTH_TYPE` is not `apikey`) |
+| `AUTH_PASSWORD`            | Yes*     | —        | Password for HTTP Basic Auth (*required when `AUTH_TYPE` is not `apikey`) |
+| `AUTH_APIKEY`              | Yes*     | —        | API key value (*required when `AUTH_TYPE=apikey`) |
+| `DATABASE_MIGRATE`         | No       | `false`  | Set to `true` to run BoltDB → SQLite migration on startup |
+| `TIMEZONE`                 | No       | `UTC`    | IANA timezone name for visit date grouping and monthly cleanup schedule (e.g. `Asia/Taipei`) |
+| `VISITS_HOURLY_THRESHOLD`  | No       | `10`     | Controls hourly breakdown in API output: `0` = never show, `1` = always show, `N > 1` = show only when `allday > N`. Hourly data is always stored internally regardless of this setting. |
 
 Example `.env`:
 
@@ -197,6 +202,21 @@ Get aggregated visit statistics for a specific short URL.
 
 **Auth required:** Yes
 
+**Query parameters:**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `refresh` | `1`   | Force bypass the 1-hour statistics cache and recompute immediately. Omit for normal cached behaviour. |
+
+**Examples:**
+```bash
+# Normal request (returns cached result if available)
+curl -H "Authorization: Bearer <key>" https://your-domain/handle/visits/aB3xY
+
+# Force refresh (bypasses cache, recomputes from visits table)
+curl -H "Authorization: Bearer <key>" https://your-domain/handle/visits/aB3xY?refresh=1
+```
+
 **Response `200 OK`:**
 ```json
 {
@@ -233,11 +253,51 @@ Get aggregated visit statistics for a specific short URL.
 ```
 
 **Notes:**
-- `total` is the total number of visits recorded for this short URL.
+- `total` is the cumulative visit count, including historical data preserved in the `statistics` table even after the `visits` table has been cleared.
 - `referrer_statistics` groups visits by type (e.g. `social`, `search`, `ad`, `email`, `direct`, `link`, `internal`, `unknown`). Each type contains an `all` count plus per-network breakdowns (e.g. `facebook`, `google`).
-- `dates` groups visits by calendar date (`YYYY-MM-DD`) in the timezone set by `TIMEZONE` (defaults to UTC). Each date always contains `allday` (total). Hourly keys (`0`–`23`) are included based on `VISITS_HOURLY_THRESHOLD`: `0` = never, `1` = always, `N > 1` = only when `allday > N` (defaults to `10`).
+- `dates` groups visits by calendar date (`YYYY-MM-DD`) in the timezone set by `TIMEZONE` (defaults to UTC). Each date always contains `allday` (total). Hourly keys (`0`–`23`) are included in the response based on `VISITS_HOURLY_THRESHOLD`: `0` = never, `1` = always, `N > 1` = only when `allday > N` (defaults to `10`). Hourly data is **always stored** in the statistics cache regardless of this threshold.
+- Results are served from the `statistics` cache when it was updated within the last hour. A cache miss triggers incremental aggregation (only visits newer than the last cache update are processed) and updates the cache. Use `?refresh=1` to force a recompute regardless of cache age.
 
 **Referrer types:** `ad`, `email`, `social`, `search`, `internal`, `direct`, `link`, `unknown`
+
+---
+
+## Statistics Cache & Monthly Cleanup
+
+### How it works
+
+Visit statistics are stored in two tables:
+
+| Table        | Purpose | Retention |
+|--------------|---------|-----------|
+| `visits`     | Raw per-connection records | Cleared monthly by the automatic cleanup job |
+| `statistics` | Aggregated result cache (one row per short URL) | Kept indefinitely; accumulates history across cleanups |
+
+**Aggregation flow:**
+
+1. `GET /handle/visits/{id}` is called.
+2. If `statistics.update_at` is within the last hour → return the cached result immediately.
+3. Otherwise, query only `visits` records newer than `statistics.agg_date_end` (incremental), merge them with the existing cached result, and update the cache.
+
+Because the incremental query uses `agg_date_end` as the watermark, historical data in `statistics` is never lost when `visits` is cleared.
+
+**Storage vs. output:**
+
+- The `statistics` table always stores full per-hour data (`0`–`23`) for every date.
+- The API response applies `VISITS_HOURLY_THRESHOLD` at output time, so clients only receive hourly detail when the day's traffic exceeds the configured threshold.
+
+### Monthly automatic cleanup
+
+At **02:00 on the 1st of each month** (in the timezone set by `TIMEZONE`), the service automatically:
+
+1. Identifies all short URL IDs that have visit records older than the current month.
+2. Calls the statistics refresh for each ID, ensuring `statistics` is fully up-to-date.
+3. If all refreshes succeed, deletes all `visits` rows with `created_at` before the current month start.
+4. If any refresh fails, the deletion is aborted to prevent data loss.
+
+This keeps the `visits` table lean (≤ 1 month of raw data at any time) while `statistics` continues to accumulate totals indefinitely.
+
+> **Note:** No manual intervention is required. The cleanup goroutine starts automatically with the service.
 
 ---
 
@@ -272,8 +332,9 @@ docker compose up
 
 The container will:
 1. Read all records from `goshort.db` (BoltDB)
-2. Insert them into `goshort.sqlite` in batches of 1000
-3. Exit automatically when migration is complete
+2. Insert redirect records into `goshort.sqlite` in batches of 1000
+3. For each record that has a non-zero visit count, create a corresponding `statistics` row preserving the historical total (`agg_date_start` = 2020-01-01, `agg_date_end` = migration time)
+4. Exit automatically when migration is complete
 
 **4. Disable migration mode after completing:**
 ```dotenv
@@ -379,6 +440,29 @@ SELECT redirect_id, referer_type, referer_network,
 FROM visits
 ORDER BY created_at DESC
 LIMIT 50;
+```
+
+### Query statistics records
+
+```sql
+-- View cached statistics for all short URLs
+SELECT redirect_id,
+       json_extract(result, '$.total') AS total,
+       date(agg_date_start, 'unixepoch') AS since,
+       datetime(agg_date_end, 'unixepoch', 'localtime') AS last_agg,
+       datetime(update_at, 'unixepoch', 'localtime') AS cache_updated
+FROM statistics
+ORDER BY total DESC;
+
+-- Check if the cache is fresh (updated within the last hour)
+SELECT redirect_id,
+       json_extract(result, '$.total') AS total,
+       CASE WHEN (strftime('%s', 'now') - update_at) < 3600
+            THEN 'fresh' ELSE 'stale' END AS cache_status
+FROM statistics;
+
+-- Manually inspect the full JSON result for a specific short URL
+SELECT result FROM statistics WHERE redirect_id = 'aB3xY';
 ```
 
 ### Exit sqlite3
