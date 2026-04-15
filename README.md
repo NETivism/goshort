@@ -12,6 +12,11 @@ A self-hosted URL shortener with visit tracking and referrer detection. Built wi
 - [Build from Source](#build-from-source)
 - [Run the Service](#run-the-service)
 - [API Reference](#api-reference)
+  - [POST /handle/create](#post-handlecreate)
+  - [POST /handle/batch-create](#post-handlebatch-create)
+  - [POST /handle/batch-info](#post-handlebatch-info)
+  - [GET /{id}](#get-id)
+  - [GET /handle/visits/{id}](#get-handlevisitsid)
 - [Authentication](#authentication)
 - [Statistics Cache & Monthly Cleanup](#statistics-cache--monthly-cleanup)
 - [Migrate from BoltDB to SQLite](#migrate-from-boltdb-to-sqlite)
@@ -179,6 +184,87 @@ Create a new shortened URL.
 **Validation:**
 - URL must be a valid `http://` or `https://` URL
 - URL must not contain embedded username or password
+
+---
+
+### POST /handle/batch-create
+
+Create multiple shortened URLs in a single request. Up to 1000 entries per call.
+
+**Auth required:** Yes
+
+**Request body:** JSON array of objects, each with a `redirect` field.
+```json
+[
+  {"redirect": "https://example.com/page1"},
+  {"redirect": "https://example.com/page2"},
+  {"redirect": "https://example.com/page3"}
+]
+```
+
+**Response `201 Created`:**
+```json
+{
+  "success": 1,
+  "message": "3/3 URLs shortened successfully.",
+  "result": [
+    {"redirect": "https://example.com/page1", "short": "aB3xY"},
+    {"redirect": "https://example.com/page2", "short": "cD4zA"},
+    {"redirect": "https://example.com/page3", "short": "eF5bB"}
+  ]
+}
+```
+
+If some entries fail to save (e.g. due to a database error), they are included in the result **without** a `short` field and with an `error` field instead. The remaining entries are still processed.
+
+```json
+{
+  "success": 1,
+  "message": "2/3 URLs shortened successfully. 1 failed.",
+  "result": [
+    {"redirect": "https://example.com/page1", "short": "aB3xY"},
+    {"redirect": "https://example.com/page2", "short": "cD4zA"},
+    {"redirect": "https://example.com/page3", "error": "error saving record: ..."}
+  ]
+}
+```
+
+**Validation (applied to all entries before any insert):**
+- Each entry must have a `redirect` field
+- URL must be a valid `http://` or `https://` URL
+- URL must not contain embedded username or password
+- Maximum 1000 entries per request
+
+---
+
+### POST /handle/batch-info
+
+Look up redirect targets and total visit counts for multiple short URL IDs in a single request.
+
+**Auth required:** Yes
+
+**Request body:** JSON array of short URL IDs.
+```json
+["aB3xY", "cD4zA", "eF5bB"]
+```
+
+**Response `200 OK`:**
+```json
+{
+  "success": 1,
+  "message": "Redirect info loaded successfully.",
+  "result": [
+    {"id": "aB3xY", "redirect": "https://example.com/page1", "total": 42},
+    {"id": "cD4zA", "redirect": "https://example.com/page2", "total": 7},
+    {"id": "eF5bB", "redirect": "",                          "total": 0}
+  ]
+}
+```
+
+**Notes:**
+- The response preserves the same order as the input array.
+- If an ID does not exist in the database, `redirect` is an empty string and `total` is `0`. The entry is still included in the result.
+- `total` is read from the `statistics` cache. It reflects the cumulative count as of the last statistics refresh. It does **not** trigger a fresh aggregation — call `GET /handle/visits/{id}` to recompute.
 
 ---
 

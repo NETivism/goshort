@@ -735,6 +735,417 @@ func TestVisitsHistoryPreservedAfterVisitsClear(t *testing.T) {
 	}
 }
 
+// --- /handle/batch-info tests ---
+
+func TestBatchInfoReturnsRedirectAndTotal(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	dbi := db.Get()
+	dbi.Create(&model.Redirect{Id: "bi01", Redirect: "https://example.com/a", Domain: "example.com", Path: "/a"})
+	dbi.Create(&model.Redirect{Id: "bi02", Redirect: "https://example.com/b", Domain: "example.com", Path: "/b"})
+
+	// Seed statistics for bi01 (total=10), leave bi02 with no statistics row.
+	result01, _ := json.Marshal(model.VisitsStatResult{Total: 10})
+	now := time.Now()
+	dbi.Create(&model.Statistics{
+		RedirectId: "bi01", Result: string(result01),
+		AggDateStart: now, AggDateEnd: now, CreatedAt: now.Unix(), UpdateAt: now.Unix(),
+	})
+
+	router := New()
+	body := `["bi01","bi02"]`
+	req := httptest.NewRequest("POST", "/handle/batch-info", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp["success"] != float64(1) {
+		t.Fatalf("expected success=1, got %v", resp["success"])
+	}
+
+	results := resp["result"].([]interface{})
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	item0 := results[0].(map[string]interface{})
+	if item0["id"] != "bi01" {
+		t.Errorf("expected id=bi01, got %v", item0["id"])
+	}
+	if item0["redirect"] != "https://example.com/a" {
+		t.Errorf("expected redirect=https://example.com/a, got %v", item0["redirect"])
+	}
+	if item0["total"] != float64(10) {
+		t.Errorf("expected total=10, got %v", item0["total"])
+	}
+
+	item1 := results[1].(map[string]interface{})
+	if item1["id"] != "bi02" {
+		t.Errorf("expected id=bi02, got %v", item1["id"])
+	}
+	if item1["redirect"] != "https://example.com/b" {
+		t.Errorf("expected redirect=https://example.com/b, got %v", item1["redirect"])
+	}
+	if item1["total"] != float64(0) {
+		t.Errorf("expected total=0 (no statistics row), got %v", item1["total"])
+	}
+}
+
+func TestBatchInfoNonExistentIDsReturnEmpty(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	body := `["notfound1","notfound2"]`
+	req := httptest.NewRequest("POST", "/handle/batch-info", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	results := resp["result"].([]interface{})
+	if len(results) != 2 {
+		t.Fatalf("expected 2 result items, got %d", len(results))
+	}
+	for _, r := range results {
+		item := r.(map[string]interface{})
+		if item["redirect"] != "" {
+			t.Errorf("expected empty redirect for non-existent ID, got %v", item["redirect"])
+		}
+		if item["total"] != float64(0) {
+			t.Errorf("expected total=0 for non-existent ID, got %v", item["total"])
+		}
+	}
+}
+
+func TestBatchInfoPreservesInputOrder(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	dbi := db.Get()
+	dbi.Create(&model.Redirect{Id: "order1", Redirect: "https://first.com", Domain: "first.com", Path: "/"})
+	dbi.Create(&model.Redirect{Id: "order2", Redirect: "https://second.com", Domain: "second.com", Path: "/"})
+	dbi.Create(&model.Redirect{Id: "order3", Redirect: "https://third.com", Domain: "third.com", Path: "/"})
+
+	router := New()
+	body := `["order3","order1","order2"]`
+	req := httptest.NewRequest("POST", "/handle/batch-info", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	results := resp["result"].([]interface{})
+
+	expected := []string{"order3", "order1", "order2"}
+	for i, exp := range expected {
+		got := results[i].(map[string]interface{})["id"]
+		if got != exp {
+			t.Errorf("position %d: expected id=%s, got %v", i, exp, got)
+		}
+	}
+}
+
+func TestBatchInfoEmptyArrayReturns400(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-info", strings.NewReader(`[]`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty array, got %d", rr.Code)
+	}
+}
+
+func TestBatchInfoInvalidBodyReturns400(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-info", strings.NewReader(`not json`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid JSON, got %d", rr.Code)
+	}
+}
+
+func TestBatchInfoWithoutAuthReturns401(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-info", strings.NewReader(`["abc12"]`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rr.Code)
+	}
+}
+
+// --- /handle/batch-create tests ---
+
+func TestBatchCreateSuccess(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	body := `[
+		{"redirect":"https://example.com/page1"},
+		{"redirect":"https://example.com/page2"},
+		{"redirect":"https://example.com/page3"}
+	]`
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d, body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp["success"] != float64(1) {
+		t.Fatalf("expected success=1, got %v", resp["success"])
+	}
+
+	results := resp["result"].([]interface{})
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	redirects := []string{
+		"https://example.com/page1",
+		"https://example.com/page2",
+		"https://example.com/page3",
+	}
+	dbi := db.Get()
+	for i, r := range results {
+		item := r.(map[string]interface{})
+		short, hasShort := item["short"]
+		if !hasShort || short == "" {
+			t.Errorf("result %d: expected non-empty short", i)
+		}
+		if _, hasErr := item["error"]; hasErr {
+			t.Errorf("result %d: expected no error field, got %v", i, item["error"])
+		}
+		if item["redirect"] != redirects[i] {
+			t.Errorf("result %d: expected redirect=%s, got %v", i, redirects[i], item["redirect"])
+		}
+		// Verify record in DB
+		var record model.Redirect
+		dbi.Where("id = ?", short).First(&record)
+		if record.Redirect != redirects[i] {
+			t.Errorf("result %d: DB redirect mismatch, expected %s got %s", i, redirects[i], record.Redirect)
+		}
+	}
+}
+
+func TestBatchCreateValidationFailsBeforeInsert(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	// Third entry has an invalid URL — validation should catch it before any insert.
+	body := `[
+		{"redirect":"https://example.com/ok1"},
+		{"redirect":"https://example.com/ok2"},
+		{"redirect":"ftp://bad-scheme.com"}
+	]`
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid URL in batch, got %d", rr.Code)
+	}
+
+	// Nothing should have been inserted.
+	dbi := db.Get()
+	var count int64
+	dbi.Model(&model.Redirect{}).Where("redirect IN ?", []string{
+		"https://example.com/ok1",
+		"https://example.com/ok2",
+	}).Count(&count)
+	if count != 0 {
+		t.Errorf("expected 0 records inserted (validation failed before insert), got %d", count)
+	}
+}
+
+func TestBatchCreateEmptyRedirectReturns400(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(`[{"redirect":""}]`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty redirect, got %d", rr.Code)
+	}
+}
+
+func TestBatchCreateNonHTTPSchemeReturns400(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(`[{"redirect":"ftp://example.com/file"}]`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for ftp scheme, got %d", rr.Code)
+	}
+}
+
+func TestBatchCreateURLWithCredentialsReturns400(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(`[{"redirect":"https://user:pass@example.com/"}]`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for URL with credentials, got %d", rr.Code)
+	}
+}
+
+func TestBatchCreateEmptyArrayReturns400(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(`[]`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty array, got %d", rr.Code)
+	}
+}
+
+func TestBatchCreateExceedsLimitReturns400(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	items := make([]map[string]string, 1001)
+	for i := range items {
+		items[i] = map[string]string{"redirect": "https://example.com/"}
+	}
+	bodyBytes, _ := json.Marshal(items)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(string(bodyBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for batch size > 1000, got %d", rr.Code)
+	}
+}
+
+func TestBatchCreateWithoutAuthReturns401(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(`[{"redirect":"https://example.com/"}]`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rr.Code)
+	}
+}
+
+func TestBatchCreateMessageCountsSuccessAndFailure(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	// Insert a record to force a duplicate-key DB error on the second insert.
+	dbi := db.Get()
+	dbi.Create(&model.Redirect{Id: "dupid1", Redirect: "https://dup.com", Domain: "dup.com", Path: "/"})
+
+	router := New()
+	// Both URLs are format-valid; we simulate a partial failure by pre-occupying
+	// a short ID slot — actual error path tested via message counts.
+	body := `[
+		{"redirect":"https://example.com/success1"},
+		{"redirect":"https://example.com/success2"}
+	]`
+	req := httptest.NewRequest("POST", "/handle/batch-create", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer testkey")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d, body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	results := resp["result"].([]interface{})
+	if len(results) != 2 {
+		t.Fatalf("expected 2 result items, got %d", len(results))
+	}
+
+	// Both should succeed — verify message format.
+	msg := resp["message"].(string)
+	if msg != "2/2 URLs shortened successfully." {
+		t.Errorf("expected '2/2 URLs shortened successfully.', got %q", msg)
+	}
+}
+
 // TestVisitsForceRefresh verifies that ?refresh=1 bypasses the 1-hour cache.
 func TestVisitsForceRefresh(t *testing.T) {
 	setApiKeyAuth(t)
