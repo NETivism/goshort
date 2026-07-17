@@ -134,5 +134,8 @@ func GetVisitsHourlyThreshold() int64 {
 }
 
 func GetSqliteDsn() string {
-	return fmt.Sprintf("%s.sqlite", Get(DatabaseName))
+	// Enable WAL + synchronous=NORMAL for much faster writes (avoids an fsync per
+	// INSERT) while staying crash-safe, and a busy_timeout so concurrent access
+	// retries instead of failing with "database is locked".
+	return fmt.Sprintf("%s.sqlite?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000", Get(DatabaseName))
 }
