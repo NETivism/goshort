@@ -11,6 +11,7 @@ A self-hosted URL shortener with visit tracking and referrer detection. Built wi
 - [Configuration](#configuration)
 - [Build from Source](#build-from-source)
 - [Run the Service](#run-the-service)
+- [Update a Docker Deployment](#update-a-docker-deployment)
 - [API Reference](#api-reference)
   - [POST /handle/create](#post-handlecreate)
   - [POST /handle/batch-create](#post-handlebatch-create)
@@ -45,7 +46,9 @@ A self-hosted URL shortener with visit tracking and referrer detection. Built wi
 cd docker
 cp dot-env.example .env
 # Edit .env with your credentials
-docker compose up
+docker compose pull
+docker compose up -d
+docker compose logs --tail=100 goshort
 ```
 
 The service will be available at `http://localhost:33512`.
@@ -119,6 +122,34 @@ docker compose up
 ```
 
 See `./docker/docker-compose.yml` for details.
+
+---
+
+## Update a Docker Deployment
+
+The production Compose file uses `netivism/goshort:sqlite` from Docker Hub.
+First push the latest code and wait for the **Create and publish a Docker
+image** GitHub Action to finish:
+
+```bash
+git push origin sqlite
+```
+
+Then run the following commands on the production server:
+
+```bash
+cd /path/to/goshort/docker
+docker compose pull goshort
+mkdir -p backups
+docker compose stop goshort
+tar -czf "backups/goshort-$(date +%Y%m%d-%H%M%S).tgz" goshort.sqlite*
+docker compose up -d --force-recreate goshort
+docker compose logs --tail=100 goshort
+```
+
+Replace `goshort` in the backup command if `DATABASE_NAME` in `.env` uses a
+different name. Stopping the container before backup ensures the SQLite and WAL
+files are consistent.
 
 ---
 
