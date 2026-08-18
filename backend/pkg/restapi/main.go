@@ -12,8 +12,8 @@ import (
 
 func New() *mux.Router {
 	router := mux.NewRouter()
-	router.HandleFunc("/handle/create", handle.Create).Methods("POST")
-	router.HandleFunc("/handle/create-entry", handle.Create).Methods("POST") // backward compatibility
+	router.HandleFunc("/handle/create", middleware.Auth(handle.Create)).Methods("POST")
+	router.HandleFunc("/handle/create-entry", middleware.Auth(handle.Create)).Methods("POST") // backward compatibility
 	router.HandleFunc("/handle/visits/{id}", middleware.Auth(handle.Visits)).Methods("GET")
 	router.HandleFunc("/handle/batch-info", middleware.Auth(handle.BatchInfo)).Methods("POST")
 	router.HandleFunc("/handle/batch-create", middleware.Auth(handle.BatchCreate)).Methods("POST")

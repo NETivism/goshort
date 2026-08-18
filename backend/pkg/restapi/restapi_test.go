@@ -54,6 +54,7 @@ func TestCreateShortURL(t *testing.T) {
 	router := New()
 	body := `{"redirect":"https://example.com/long-page"}`
 	req := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	req.SetBasicAuth("admin", "secret")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -106,6 +107,7 @@ func TestCreateShortURLInvalidBody(t *testing.T) {
 	router := New()
 	body := `{"redirect":""}`
 	req := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	req.SetBasicAuth("admin", "secret")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -122,12 +124,78 @@ func TestCreateShortURLNonHTTP(t *testing.T) {
 	router := New()
 	body := `{"redirect":"ftp://example.com/file"}`
 	req := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	req.SetBasicAuth("admin", "secret")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for non-http scheme, got %d", rr.Code)
+	}
+}
+
+func TestCreateWithoutAuthReturns401(t *testing.T) {
+	setBasicAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	body := `{"redirect":"https://example.com/no-auth"}`
+	req := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 without auth, got %d", rr.Code)
+	}
+
+	var count int64
+	db.Get().Model(&model.Redirect{}).Where("redirect = ?", "https://example.com/no-auth").Count(&count)
+	if count != 0 {
+		t.Errorf("unauthenticated request should not create a record, found %d", count)
+	}
+}
+
+func TestCreateWithWrongApiKeyReturns401(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	body := `{"redirect":"https://example.com/wrong-key"}`
+	req := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer wrongkey")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 with wrong api key, got %d", rr.Code)
+	}
+}
+
+func TestCreateEntryRequiresAuth(t *testing.T) {
+	setApiKeyAuth(t)
+	setupTestDB(t)
+
+	router := New()
+	body := `{"redirect":"https://example.com/legacy"}`
+	req := httptest.NewRequest("POST", "/handle/create-entry", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 on /handle/create-entry without auth, got %d", rr.Code)
+	}
+
+	req2 := httptest.NewRequest("POST", "/handle/create-entry", strings.NewReader(body))
+	req2.Header.Set("Authorization", "Bearer testkey")
+	req2.Header.Set("Content-Type", "application/json")
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusCreated {
+		t.Errorf("expected 201 on /handle/create-entry with auth, got %d", rr2.Code)
 	}
 }
 
@@ -141,6 +209,7 @@ func TestCreateThenRedirectFlow(t *testing.T) {
 	// Step 1: Create a short URL
 	body := `{"redirect":"https://target-site.org/landing?page=1"}`
 	createReq := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	createReq.SetBasicAuth("admin", "secret")
 	createReq.Header.Set("Content-Type", "application/json")
 	createRR := httptest.NewRecorder()
 	router.ServeHTTP(createRR, createReq)
@@ -191,7 +260,6 @@ func TestCreateThenRedirectFlow(t *testing.T) {
 	}
 }
 
-
 func TestCreateThenRedirectWithGoogleSearch(t *testing.T) {
 	setBasicAuth(t)
 	setupTestDB(t)
@@ -199,6 +267,7 @@ func TestCreateThenRedirectWithGoogleSearch(t *testing.T) {
 
 	body := `{"redirect":"https://example.com/dest"}`
 	createReq := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	createReq.SetBasicAuth("admin", "secret")
 	createReq.Header.Set("Content-Type", "application/json")
 	createRR := httptest.NewRecorder()
 	router.ServeHTTP(createRR, createReq)
@@ -238,6 +307,7 @@ func TestCreateThenRedirectWithLineUA(t *testing.T) {
 
 	body := `{"redirect":"https://example.com/dest"}`
 	createReq := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	createReq.SetBasicAuth("admin", "secret")
 	createReq.Header.Set("Content-Type", "application/json")
 	createRR := httptest.NewRecorder()
 	router.ServeHTTP(createRR, createReq)
@@ -277,6 +347,7 @@ func TestCreateThenRedirectDirectTraffic(t *testing.T) {
 
 	body := `{"redirect":"https://example.com/dest"}`
 	createReq := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	createReq.SetBasicAuth("admin", "secret")
 	createReq.Header.Set("Content-Type", "application/json")
 	createRR := httptest.NewRecorder()
 	router.ServeHTTP(createRR, createReq)
@@ -315,6 +386,7 @@ func TestCreateThenMultipleVisits(t *testing.T) {
 
 	body := `{"redirect":"https://example.com/multi"}`
 	createReq := httptest.NewRequest("POST", "/handle/create", strings.NewReader(body))
+	createReq.SetBasicAuth("admin", "secret")
 	createReq.Header.Set("Content-Type", "application/json")
 	createRR := httptest.NewRecorder()
 	router.ServeHTTP(createRR, createReq)
